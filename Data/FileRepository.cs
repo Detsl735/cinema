@@ -61,4 +61,32 @@ public class FileRepository
         return null;
     }
 
+    public async Task<IEnumerable<File>> GetAllAsync()
+    {
+        const string query = "SELECT * FROM files";
+
+        await using var connection = _dbHelper.GetConnection();
+        await connection.OpenAsync();
+
+        var list = new List<File>();
+        await using var cmd = new NpgsqlCommand(query, connection);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new File
+            {
+                Id = reader.GetInt32(0),
+                MovieId = reader.GetInt32(1),
+                FileUrl = reader.GetString(2),
+                HlsUrl = reader.GetString(3),
+                FileType = reader.GetString(4),
+                FileSize = reader.GetInt64(5),
+                UploadedAt = reader.GetDateTime(6)
+            });
+        }
+
+        return list;
+    }
+
+
 }

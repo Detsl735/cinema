@@ -4,68 +4,59 @@ using System.Threading.Tasks;
 
 public class WatchHistoryRepository
 {
-    private readonly DatabaseHelper _dbHelper;
+    private readonly DatabaseHelper _db;
 
-    public WatchHistoryRepository(DatabaseHelper dbHelper)
+    public WatchHistoryRepository(DatabaseHelper db)
     {
-        _dbHelper = dbHelper;
+        _db = db;
     }
 
-    public async Task AddHistoryAsync(WatchHistory history)
+    public async Task AddAsync(int userId, int movieId)
     {
-        const string query = "INSERT INTO watch_history (user_id, movie_id, watched_at, progress) VALUES (@UserId, @MovieId, @WatchedAt, @Progress)";
+        const string sql = @"
+            INSERT INTO watch_history (user_id, movie_id)
+            VALUES (@user_id, @movie_id)
+            ON CONFLICT DO NOTHING;";
 
-        await using var connection = _dbHelper.GetConnection();
-        await connection.OpenAsync();
+        await using var conn = _db.GetConnection();
+        await conn.OpenAsync();
 
-        await using var command = new NpgsqlCommand(query, connection);
-        command.Parameters.AddWithValue("UserId", history.UserId);
-        command.Parameters.AddWithValue("MovieId", history.MovieId);
-        command.Parameters.AddWithValue("WatchedAt", history.WatchedAt);
-        command.Parameters.AddWithValue("Progress", history.Progress);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("user_id", userId);
+        cmd.Parameters.AddWithValue("movie_id", movieId);
 
-        await command.ExecuteNonQueryAsync();
+        await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<IEnumerable<WatchHistory>> GetHistoryByUserAsync(int userId)
+    public async Task<IEnumerable<WatchHistoryItemDto>> GetWithTitlesAsync(int userId)
     {
-        const string query = "SELECT * FROM watch_history WHERE user_id = @UserId";
+        const string sql = @"
+            SELECT w.id, w.movie_id, m.title, w.watched_at
+            FROM watch_history w
+            JOIN movies m ON m.id = w.movie_id
+            WHERE w.user_id = @user_id
+            ORDER BY w.watched_at DESC";
 
-        await using var connection = _dbHelper.GetConnection();
-        await connection.OpenAsync();
+        await using var conn = _db.GetConnection();
+        await conn.OpenAsync();
 
-        await using var command = new NpgsqlCommand(query, connection);
-        command.Parameters.AddWithValue("UserId", userId);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("user_id", userId);
 
-        await using var reader = await command.ExecuteReaderAsync();
-        var histories = new List<WatchHistory>();
+        await using var reader = await cmd.ExecuteReaderAsync();
 
+        var result = new List<WatchHistoryItemDto>();
         while (await reader.ReadAsync())
         {
-            histories.Add(new WatchHistory
+            result.Add(new WatchHistoryItemDto
             {
                 Id = reader.GetInt32(0),
-                UserId = reader.GetInt32(1),
-                MovieId = reader.GetInt32(2),
-                WatchedAt = reader.GetDateTime(3),
-                Progress = reader.GetInt32(4)
+                MovieId = reader.GetInt32(1),
+                MovieTitle = reader.GetString(2),
+                WatchedAt = reader.GetDateTime(3)
             });
         }
 
-        return histories;
-    }
-
-    public async Task UpdateProgressAsync(int id, int progress)
-    {
-        const string query = "UPDATE watch_history SET progress = @Progress WHERE id = @Id";
-
-        await using var connection = _dbHelper.GetConnection();
-        await connection.OpenAsync();
-
-        await using var command = new NpgsqlCommand(query, connection);
-        command.Parameters.AddWithValue("Id", id);
-        command.Parameters.AddWithValue("Progress", progress);
-
-        await command.ExecuteNonQueryAsync();
+        return result;
     }
 }

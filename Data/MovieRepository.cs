@@ -27,29 +27,26 @@ public class MovieRepository
         await command.ExecuteNonQueryAsync();
     }
 
-    public async Task<IEnumerable<Movie>> GetAllMoviesAsync()
+    public async Task<IEnumerable<MovieCatalogItemDto>> GetCatalogAsync()
     {
-        const string query = "SELECT id, title, description, release_date, genre FROM movies";
+        const string sql = "SELECT id, title FROM movies ORDER BY title";
+        await using var conn = _dbHelper.GetConnection();
+        await conn.OpenAsync();
 
-        await using var connection = _dbHelper.GetConnection();
-        await connection.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        await using var reader = await cmd.ExecuteReaderAsync();
 
-        await using var command = new NpgsqlCommand(query, connection);
-        await using var reader = await command.ExecuteReaderAsync();
-
-        var movies = new List<Movie>();
+        var result = new List<MovieCatalogItemDto>();
         while (await reader.ReadAsync())
         {
-            movies.Add(new Movie
+            result.Add(new MovieCatalogItemDto
             {
-                Id = reader.GetInt32(0),
-                Title = reader.GetString(1),
-                Description = reader.GetString(2),
-                ReleaseDate = reader.GetDateTime(3),
-                Genre = reader.GetString(4)
+                MovieId = reader.GetInt32(0),
+                Title = reader.GetString(1)
             });
         }
 
-        return movies;
+        return result;
     }
+
 }

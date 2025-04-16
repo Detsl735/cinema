@@ -1,60 +1,122 @@
 ﻿using System;
 using System.IO;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using System.Collections.Generic;
+using Microsoft.AspNetCore.Http;
 
 public class FileService
 {
-    private readonly MinioService _minioService;
-    private readonly FFmpegService _ffmpegService;
-    private readonly FileRepository _fileRepository;
-    private readonly ILogger<FileService> _logger;
+    private readonly MinioService _minio;
+    private readonly FFmpegService _ffmpeg;
+    private readonly FileRepository _repo;
+    private readonly ILogger<FileService> _log;
 
-    public FileService(MinioService minioService, FFmpegService ffmpegService, FileRepository fileRepository, ILogger<FileService> logger)
+    // Имя бакета в MinIO
+    private const string Bucket = "movies-storage";
+
+    public FileService(
+        MinioService minio,
+        FFmpegService ffmpeg,
+        FileRepository repo,
+        ILogger<FileService> log)
     {
-        _minioService = minioService;
-        _ffmpegService = ffmpegService;
-        _fileRepository = fileRepository;
-        _logger = logger;
+        _minio = minio;
+        _ffmpeg = ffmpeg;
+        _repo = repo;
+        _log = log;
     }
 
-    public async Task UploadFileAsync(int movieId, string filePath, string bucketName)
+    /// <summary>
+    /// Основной метод, вызываемый из контроллера — принимает файл напрямую.
+    /// </summary>
+    public async Task UploadFileAsync(int movieId, IFormFile file)
     {
-        var fileName = Path.GetFileName(filePath);
-        var fileNameWithoutExt = Path.GetFileNameWithoutExtension(filePath);
+        // ─── Подготовка временной директории ──────────────────────
+        var tempRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempRoot);
 
-        var fileUrl = $"https://localhost:9000/{bucketName}/{fileName}";
-        var hlsUrl = $"https://localhost:9000/{bucketName}/{fileNameWithoutExt}.m3u8";
-        var fileSize = new FileInfo(filePath).Length;
+        var fileName = file.FileName;
+        var sourcePath = Path.Combine(tempRoot, fileName);
 
-        _logger.LogInformation("Uploading file: FileUrl={FileUrl}, HlsUrl={HlsUrl}, FileType=mp4, FileSize={FileSize}",
-            fileUrl, hlsUrl, fileSize);
+        // ─── Сохраняем IFormFile во временный путь ────────────────
+        using (var stream = new FileStream(sourcePath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
 
-        await _minioService.UploadFileAsync(bucketName, fileName, filePath, "video/mp4");
+        // ─── Вызываем стандартный upload метод ────────────────────
+        await UploadFileAsync(movieId, sourcePath);
 
-        var hlsDirectory = Path.GetDirectoryName(filePath);
-        await _ffmpegService.ConvertToHlsAsync(filePath, hlsDirectory, fileNameWithoutExt);
+        // ─── Удаляем временный файл ───────────────────────────────
+        try
+        {
+            System.IO.File.Delete(sourcePath);
+            ;
+        }
+        catch { }
+    }
 
-        var hlsFilePath = $"{hlsDirectory}/{fileNameWithoutExt}.m3u8";
-        await _minioService.UploadFileAsync(bucketName, $"{fileNameWithoutExt}.m3u8", hlsFilePath, "application/x-mpegURL");
+    /// <summary>
+    /// Внутренний метод, работает с локальным mp4-файлом по пути
+    /// </summary>
+    public async Task UploadFileAsync(int movieId, string sourceMp4)
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "hls-work");
+        if (Directory.Exists(tempRoot))
+            Directory.Delete(tempRoot, recursive: true);
+        Directory.CreateDirectory(tempRoot);
 
-        var file = new File
+        var baseName = Path.GetFileNameWithoutExtension(sourceMp4); // "IMG_7261"
+
+        // ─── Конвертация в HLS ─────────────────────────────────────
+        await _ffmpeg.ConvertToHlsAsync(sourceMp4, tempRoot, baseName);
+
+        var manifestLocal = Path.Combine(tempRoot, $"{baseName}.m3u8");
+        var segmentDir = Path.Combine(tempRoot, baseName);
+
+        // ─── Загрузка manifest ─────────────────────────────────────
+        await _minio.UploadFileAsync(
+            Bucket,
+            $"{baseName}.m3u8",
+            manifestLocal,
+            "application/vnd.apple.mpegurl");
+
+        // ─── Загрузка всех ts-сегментов ────────────────────────────
+        foreach (var tsPath in Directory.EnumerateFiles(segmentDir, "*.ts"))
+        {
+            var tsName = Path.GetFileName(tsPath);
+            var objKey = $"{baseName}/{tsName}";
+
+            await _minio.UploadFileAsync(
+                Bucket,
+                objKey,
+                tsPath,
+                "video/MP2T");
+        }
+
+        // ─── Запись в БД ───────────────────────────────────────────
+        var fileRecord = new File
         {
             MovieId = movieId,
-            FileUrl = fileUrl,
-            HlsUrl = hlsUrl,
+            FileUrl = $"http://localhost:9000/{Bucket}/{Path.GetFileName(sourceMp4)}",
+            HlsUrl = $"http://localhost:9000/{Bucket}/{baseName}.m3u8",
             FileType = "mp4",
-            FileSize = fileSize,
+            FileSize = new FileInfo(sourceMp4).Length,
             UploadedAt = DateTime.UtcNow
         };
 
-        _logger.LogInformation("Saving file to database: MovieId={MovieId}, FileUrl={FileUrl}, HlsUrl={HlsUrl}, FileType={FileType}, FileSize={FileSize}, UploadedAt={UploadedAt}",
-            file.MovieId, file.FileUrl, file.HlsUrl, file.FileType, file.FileSize, file.UploadedAt);
+        await _repo.AddFileAsync(fileRecord);
+        _log.LogInformation("HLS uploaded: MovieId={MovieId}, Manifest={HlsUrl}",
+                            movieId, fileRecord.HlsUrl);
 
-        await _fileRepository.AddFileAsync(file);
+        // ─── Очистка временных HLS-файлов ─────────────────────────
+        try { Directory.Delete(tempRoot, recursive: true); } catch { }
     }
 
-    public async Task<File> GetFileByMovieIdAsync(int movieId)
-    {
-        return await _fileRepository.GetFileByMovieIdAsync(movieId);
-    }
+    public Task<File> GetFileByMovieIdAsync(int id) =>
+        _repo.GetFileByMovieIdAsync(id);
+
+    public Task<IEnumerable<File>> GetAllFilesAsync() =>
+        _repo.GetAllAsync();
 }

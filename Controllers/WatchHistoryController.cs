@@ -1,38 +1,30 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using System.Collections.Generic;
-using System.Threading.Tasks;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class WatchHistoryController : ControllerBase
 {
     private readonly WatchHistoryService _service;
+    public WatchHistoryController(WatchHistoryService svc) => _service = svc;
 
-    public WatchHistoryController(WatchHistoryService service)
-    {
-        _service = service;
-    }
-
-   
+    // POST /api/watch-history
     [HttpPost]
-    public async Task<IActionResult> AddHistory([FromBody] WatchHistory history)
+    public async Task<IActionResult> Add([FromBody] WatchHistoryDto dto)
     {
-        await _service.AddHistoryAsync(history);
-        return Ok("Watch history added successfully.");
+        int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
+        await _service.AddAsync(dto.MovieId, userId);
+        return Ok();
     }
 
-    
-    [HttpGet("user/{userId}")]
-    public async Task<ActionResult<IEnumerable<WatchHistory>>> GetHistoryByUser(int userId)
+    // GET /api/watch-history
+    [HttpGet]
+    public async Task<IActionResult> List()
     {
-        var history = await _service.GetHistoryByUserAsync(userId);
-        return Ok(history);
-    }
-
-    [HttpPut("{id}")]
-    public async Task<IActionResult> UpdateProgress(int id, [FromBody] int progress)
-    {
-        await _service.UpdateProgressAsync(id, progress);
-        return Ok("Watch progress updated successfully.");
+        int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
+        var list = await _service.GetWithTitlesAsync(userId);
+        return Ok(list);
     }
 }

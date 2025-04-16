@@ -20,10 +20,13 @@ public class MovieController : ControllerBase
         return Ok("Movie added successfully!");
     }
 
-    [HttpGet]
-    public async Task<ActionResult<IEnumerable<Movie>>> GetMovies()
+    [HttpGet("catalog")]
+    public async Task<IActionResult> GetCatalog()
     {
-        var movies = await _service.GetAllMoviesAsync();
-        return Ok(movies);
+        var result = await _service.GetCatalogAsync();
+        return Ok(result);
     }
+
+
+
 }

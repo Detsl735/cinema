@@ -20,10 +20,4 @@ public class UserController : ControllerBase
         return Ok("User added successfully!");
     }
 
-    [HttpGet]
-    public async Task<ActionResult<IEnumerable<User>>> GetUsers()
-    {
-        var users = await _service.GetAllUsersAsync();
-        return Ok(users);
-    }
 }

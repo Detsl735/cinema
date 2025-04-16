@@ -15,8 +15,8 @@ public class MovieService
         await _repository.AddMovieAsync(movie);
     }
 
-    public async Task<IEnumerable<Movie>> GetAllMoviesAsync()
+    public async Task<IEnumerable<MovieCatalogItemDto>> GetCatalogAsync()
     {
-        return await _repository.GetAllMoviesAsync();
+        return await _repository.GetCatalogAsync();
     }
 }

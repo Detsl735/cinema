@@ -389,8 +389,6 @@ FodyWeavers.xsd
 # Local History for Visual Studio Code
 .history/
 
-appsettings.json
-appsettings.Development.json
 
 
 # Windows Installer files from build outputs

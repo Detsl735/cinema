@@ -15,8 +15,4 @@ public class UserService
         await _repository.AddUserAsync(user);
     }
 
-    public async Task<IEnumerable<User>> GetAllUsersAsync()
-    {
-        return await _repository.GetAllUsersAsync();
-    }
 }
